@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🖥️ Script Host — File Manager</title>
+<style>
+  :root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#c9d1d9;--muted:#8b949e;
+        --green:#3fb950;--red:#f85149;--blue:#58a6ff;--yellow:#e3b341;--purple:#bc8cff;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:'Courier New',monospace;min-height:100vh;}
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 16px;
+         display:flex;align-items:center;gap:10px;}
+  header h1{font-size:1rem;color:var(--blue);}
+  #status-bar{font-size:.75rem;color:var(--muted);margin-left:auto;}
+  .tabs{display:flex;border-bottom:1px solid var(--border);background:var(--surface);}
+  .tab{padding:8px 18px;cursor:pointer;font-size:.85rem;color:var(--muted);border-bottom:2px solid transparent;}
+  .tab.active{color:var(--blue);border-bottom-color:var(--blue);}
+  #files-panel,#terminal-panel{padding:16px;display:none;}
+  #files-panel.active,#terminal-panel.active{display:block;}
+  .file-card{background:var(--surface);border:1px solid var(--border);border-radius:6px;
+             padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:10px;}
+  .file-card .name{flex:1;font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .badge{padding:2px 8px;border-radius:999px;font-size:.7rem;font-weight:700;}
+  .badge.running{background:#1a3a1a;color:var(--green);border:1px solid var(--green);}
+  .badge.stopped{background:#1a1a1a;color:var(--muted);border:1px solid var(--border);}
+  .badge.approved{background:#1a2a3a;color:var(--blue);}
+  .btn{padding:4px 10px;border:none;border-radius:4px;cursor:pointer;font-size:.75rem;font-family:inherit;}
+  .btn-danger{background:#3a1010;color:var(--red);border:1px solid var(--red);}
+  .btn-info{background:#101a2a;color:var(--blue);border:1px solid var(--blue);}
+  .btn-danger:hover{background:var(--red);color:#fff;}
+  .btn-info:hover{background:var(--blue);color:#000;}
+  #quota{font-size:.8rem;color:var(--muted);margin-bottom:12px;}
+  #quota span{color:var(--blue);}
+  #term-output{background:#000;border:1px solid var(--border);border-radius:6px;
+               height:320px;overflow-y:auto;padding:10px;font-size:.8rem;
+               line-height:1.5;white-space:pre-wrap;word-break:break-all;}
+  .term-line.cmd{color:var(--green);}
+  .term-line.out{color:var(--text);}
+  .term-line.err{color:var(--red);}
+  .term-line.info{color:var(--yellow);}
+  #term-input-row{display:flex;gap:8px;margin-top:8px;}
+  #term-input{flex:1;background:#000;border:1px solid var(--border);border-radius:4px;
+              color:var(--green);padding:6px 10px;font-family:inherit;font-size:.85rem;outline:none;}
+  #term-input:focus{border-color:var(--blue);}
+  #term-send{background:var(--blue);color:#000;border:none;border-radius:4px;
+             padding:6px 14px;cursor:pointer;font-weight:700;}
+  .prompt{color:var(--purple);}
+  #loading{text-align:center;padding:40px;color:var(--muted);}
+  .empty{text-align:center;padding:40px;color:var(--muted);font-size:.9rem;}
+  #error-screen{display:none;text-align:center;padding:60px 20px;color:var(--red);}
+  #error-screen h2{margin-bottom:10px;}
+  #error-screen p{color:var(--muted);font-size:.85rem;}
+</style>
+</head>
+<body>
+<header>
+  <span>🖥️</span>
+  <h1>Script Host — File Manager</h1>
+  <span id="status-bar">Loading…</span>
+</header>
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('files')">📂 Files</div>
+  <div class="tab" onclick="switchTab('terminal')">💻 Terminal</div>
+</div>
+
+<div id="files-panel" class="active">
+  <div id="quota"></div>
+  <div id="file-list"><div id="loading">⏳ Loading files…</div></div>
+</div>
+
+<div id="terminal-panel">
+  <div id="term-output"><span class="term-line info">Welcome to Script Host Terminal 🚀
+Your commands run in your hosting folder.
+Type 'ls' to list files, 'cat filename' to view, etc.
+─────────────────────────────────────────</span>
+</div>
+  <div id="term-input-row">
+    <span class="prompt">$ </span>
+    <input id="term-input" type="text" placeholder="Enter command…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <button id="term-send" onclick="sendCmd()">▶</button>
+  </div>
+</div>
+
+<div id="error-screen">
+  <h2>⛔ Invalid or Expired Link</h2>
+  <p>This link is missing a token or API URL.<br>Please use the button sent by the bot.</p>
+</div>
+
+<script>
+// ── Read token + API base from URL params (GitHub Pages compatible) ──────────
+const _params  = new URLSearchParams(location.search);
+const TOKEN    = _params.get('token') || '';
+const API_BASE = (_params.get('api') || '').replace(/\/$/, ''); // e.g. https://xyz.trycloudflare.com
+
+// Show error screen if essential params are missing
+if (!TOKEN || !API_BASE) {
+  document.querySelector('header').style.display = 'none';
+  document.querySelector('.tabs').style.display  = 'none';
+  document.getElementById('files-panel').style.display   = 'none';
+  document.getElementById('terminal-panel').style.display = 'none';
+  document.getElementById('error-screen').style.display  = 'block';
+}
+
+let cmdHistory = [], histIdx = -1;
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i)=>{
+    t.classList.toggle('active', (i===0&&name==='files')||(i===1&&name==='terminal'));
+  });
+  document.getElementById('files-panel').classList.toggle('active', name==='files');
+  document.getElementById('terminal-panel').classList.toggle('active', name==='terminal');
+  if(name==='files') loadFiles();
+}
+
+async function loadFiles() {
+  const list = document.getElementById('file-list');
+  list.innerHTML = '<div id="loading">⏳ Loading…</div>';
+  try {
+    const r = await fetch(`${API_BASE}/api/files?token=${TOKEN}`);
+    if (r.status === 403) { list.innerHTML='<div class="empty">⛔ Token expired or invalid.</div>'; return; }
+    const d = await r.json();
+    document.getElementById('status-bar').textContent = d.status||'';
+    document.getElementById('quota').innerHTML =
+      `📁 Files: <span>${d.used}</span> / <span>${d.limit}</span>`;
+    if(!d.files||!d.files.length){
+      list.innerHTML='<div class="empty">No files yet. Upload via the bot.</div>';return;
+    }
+    list.innerHTML = d.files.map(f=>`
+      <div class="file-card">
+        <span class="name" title="${esc(f.name)}">${esc(f.name)}</span>
+        <span class="badge ${f.running?'running':'stopped'}">${f.running?'🟢 Running':'⚫ Stopped'}</span>
+        <span class="badge approved">${esc(f.type.toUpperCase())}</span>
+        <span style="font-size:.7rem;color:var(--muted)">${fmtSize(f.size)}</span>
+        <button class="btn btn-info" onclick="dlFile('${esc(f.name)}')">⬇️</button>
+        <button class="btn btn-danger" onclick="delFile('${esc(f.name)}',this)">🗑️</button>
+      </div>`).join('');
+  } catch(e) {
+    list.innerHTML = `<div class="empty">❌ Error loading files: ${e}</div>`;
+  }
+}
+
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function fmtSize(b){if(b<1024)return b+'B';if(b<1048576)return (b/1024).toFixed(1)+'KB';return (b/1048576).toFixed(2)+'MB';}
+
+async function dlFile(name) {
+  const a = document.createElement('a');
+  a.href = `${API_BASE}/api/download?token=${TOKEN}&file=${encodeURIComponent(name)}`;
+  a.download = name;
+  a.click();
+}
+
+async function delFile(name, btn) {
+  if(!confirm(`Delete ${name}? This will also stop it if running.`)) return;
+  btn.disabled = true;
+  btn.textContent = '…';
+  const r = await fetch(`${API_BASE}/api/delete?token=${TOKEN}`, {
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({file:name})
+  });
+  const d = await r.json();
+  if(d.ok) loadFiles();
+  else { alert('Error: '+(d.error||'Unknown')); btn.disabled=false; btn.textContent='🗑️'; }
+}
+
+async function sendCmd() {
+  const inp = document.getElementById('term-input');
+  const cmd = inp.value.trim();
+  if(!cmd) return;
+  inp.value = '';
+  cmdHistory.unshift(cmd); if(cmdHistory.length>50)cmdHistory.pop(); histIdx=-1;
+
+  appendTerm(`$ ${cmd}`, 'cmd');
+  if(cmd==='clear'){document.getElementById('term-output').innerHTML='';return;}
+
+  try {
+    const r = await fetch(`${API_BASE}/api/exec?token=${TOKEN}`, {
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({cmd})
+    });
+    const d = await r.json();
+    if(d.output) appendTerm(d.output, d.rc===0?'out':'err');
+    else if(d.error) appendTerm('⛔ '+d.error,'err');
+  } catch(e){appendTerm('❌ Network error: '+e,'err');}
+}
+
+function appendTerm(text, cls) {
+  const out = document.getElementById('term-output');
+  const span = document.createElement('span');
+  span.className = 'term-line '+cls;
+  span.textContent = text+'\n';
+  out.appendChild(span);
+  out.scrollTop = out.scrollHeight;
+}
+
+document.getElementById('term-input').addEventListener('keydown', e=>{
+  if(e.key==='Enter'){sendCmd();}
+  else if(e.key==='ArrowUp'){histIdx=Math.min(histIdx+1,cmdHistory.length-1);e.target.value=cmdHistory[histIdx]||'';}
+  else if(e.key==='ArrowDown'){histIdx=Math.max(histIdx-1,-1);e.target.value=histIdx<0?'':cmdHistory[histIdx];}
+});
+
+if (TOKEN && API_BASE) loadFiles();
+</script>
+</body>
+</html>
